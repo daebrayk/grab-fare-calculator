@@ -16,6 +16,10 @@ struct RateCard {
     double ratePerMinute;   // charge for each minute (RM)
 };
 
+// Peak hour surcharge: a percentage of the subtotal.
+// NOTE: 20% is a MADE-UP SAMPLE VALUE for this assignment, not a real Grab price.
+const double PEAK_SURCHARGE_RATE = 0.20;
+
 // ---- Function declarations (prototypes) ----
 void showBanner();                 // program title + sample-rates disclaimer
 RideType getRideType();            // ask the user for ride type (validated)
@@ -28,6 +32,7 @@ string getPromoCode();             // ask for promo code (Enter = none)
 RateCard getRateCard(RideType rideType);    // switch: pick base fare and rates for a ride type
 string getRideName(RideType rideType);      // switch: ride type -> readable name
 double calculateSubtotal(const RateCard& rates, double distanceKm, double timeMinutes);
+double calculatePeakSurcharge(double subtotal, bool isPeakHour);   // surcharge amount (0 if not peak)
 
 // Input helper functions (used by the input functions above)
 void discardRestOfLine();          // throw away leftover text on the input line
@@ -45,9 +50,11 @@ int main() {
     bool isPeakHour     = getPeakHour();
     string promoCode    = getPromoCode();
 
-    // Calculate the fare before any surcharge or discount
-    RateCard rates  = getRateCard(rideType);
-    double subtotal = calculateSubtotal(rates, distanceKm, timeMinutes);
+    // Calculate the fare step by step
+    RateCard rates          = getRateCard(rideType);
+    double subtotal         = calculateSubtotal(rates, distanceKm, timeMinutes);
+    double peakSurcharge    = calculatePeakSurcharge(subtotal, isPeakHour);
+    double fareAfterSurcharge = subtotal + peakSurcharge;
 
     // Temporary check so we can see the values are correct.
     // This block gets replaced by the real fare breakdown in Step 7.
@@ -58,8 +65,9 @@ int main() {
     cout << "Time (mins): " << timeMinutes << endl;
     cout << "Peak hour: " << (isPeakHour ? "Yes" : "No") << endl;
     cout << "Promo code: " << promoCode << endl;
-    cout << "Base fare: RM " << rates.baseFare << endl;
     cout << "Subtotal: RM " << subtotal << endl;
+    cout << "Peak surcharge: RM " << peakSurcharge << endl;
+    cout << "Fare after surcharge: RM " << fareAfterSurcharge << endl;
 
     return 0;
 }
@@ -114,6 +122,15 @@ double calculateSubtotal(const RateCard& rates, double distanceKm, double timeMi
     return rates.baseFare
          + (distanceKm * rates.ratePerKm)
          + (timeMinutes * rates.ratePerMinute);
+}
+
+// Peak hour surcharge = a percentage of the subtotal, or 0 if it is not peak hour.
+// Returns the surcharge AMOUNT (not the new total) so the receipt can show it as its own line.
+double calculatePeakSurcharge(double subtotal, bool isPeakHour) {
+    if (isPeakHour) {
+        return subtotal * PEAK_SURCHARGE_RATE;
+    }
+    return 0.0;
 }
 
 // ---- Input helper functions ----
