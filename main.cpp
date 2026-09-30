@@ -1,9 +1,10 @@
 #include <iostream>
-#include <iomanip>   // fixed, setprecision: show money with 2 decimals
+#include <iomanip>   // fixed, setprecision, setw: formatting money and columns
 #include <string>
 #include <limits>    // numeric_limits, used when discarding a bad line
 #include <cstdlib>   // exit()
 #include <cctype>    // toupper, used to make promo codes case-insensitive
+#include <cmath>     // round, used to round money to whole cents
 using namespace std;
 
 // Ride types the user can choose from.
@@ -15,6 +16,17 @@ struct RateCard {
     double baseFare;        // fixed starting charge (RM)
     double ratePerKm;       // charge for each kilometre (RM)
     double ratePerMinute;   // charge for each minute (RM)
+};
+
+// Bundles every money amount shown on the receipt (all in RM, rounded to whole cents).
+struct FareBreakdown {
+    double baseFare;        // fixed starting charge
+    double distanceCharge;  // distance x rate per km
+    double timeCharge;      // time x rate per minute
+    double subtotal;        // base fare + distance charge + time charge
+    double peakSurcharge;   // extra charge during peak hour (0 if not peak)
+    double promoDiscount;   // amount taken off by a valid promo code (0 if none)
+    double total;           // subtotal + surcharge - discount
 };
 
 // Peak hour surcharge: a percentage of the subtotal.
@@ -31,8 +43,12 @@ const double PROMO_RATE_STUDENT15  = 0.15;
 const double PROMO_RATE_WELCOME20  = 0.20;
 const string NO_PROMO              = "NONE";   // value used when the user enters no promo code
 
+// Receipt layout: total width of a line, and the width of the label column.
+const int RECEIPT_WIDTH = 42;
+const int LABEL_WIDTH   = 30;
+
 // ---- Function declarations (prototypes) ----
-void showBanner();                 // program title + sample-rates disclaimer
+void showBanner();                 // program title, Part 1 link and sample-rates disclaimer
 RideType getRideType();            // ask the user for ride type (validated)
 double getDistanceKm();            // ask for distance (validated)
 double getTimeMinutes();           // ask for time (validated)
@@ -42,10 +58,19 @@ string getPromoCode();             // ask for promo code (Enter = none)
 // Fare calculation functions
 RateCard getRateCard(RideType rideType);    // switch: pick base fare and rates for a ride type
 string getRideName(RideType rideType);      // switch: ride type -> readable name
-double calculateSubtotal(const RateCard& rates, double distanceKm, double timeMinutes);
 double calculatePeakSurcharge(double subtotal, bool isPeakHour);   // surcharge amount (0 if not peak)
 double getPromoDiscountRate(const string& promoCode);              // discount rate for a code (0 if not valid)
 double calculatePromoDiscount(double fareAfterSurcharge, double discountRate);   // discount amount
+double roundToCents(double amount);         // round a money amount to 2 decimal places
+FareBreakdown buildFareBreakdown(const RateCard& rates, double distanceKm, double timeMinutes,
+                                 bool isPeakHour, double discountRate);
+
+// Display functions
+void displayReceipt(RideType rideType, double distanceKm, double timeMinutes,
+                    const string& promoCode, double discountRate, const FareBreakdown& fare);
+void printSeparator(char symbol);                              // a full-width line of one symbol
+void printMoneyLine(const string& label, double amount);       // "label ......... RM amount"
+int toPercent(double rate);                                    // 0.20 -> 20
 
 // Input helper functions (used by the input functions above)
 void discardRestOfLine();          // throw away leftover text on the input line
@@ -57,46 +82,21 @@ string toUpperCase(const string& text);     // convert a string to UPPERCASE
 int main() {
     showBanner();
 
-    // Collect all the inputs from the user
+    // 1. Collect all the inputs from the user (each function validates its own input)
     RideType rideType   = getRideType();
     double distanceKm   = getDistanceKm();
     double timeMinutes  = getTimeMinutes();
     bool isPeakHour     = getPeakHour();
     string promoCode    = getPromoCode();
 
-    // Calculate the fare step by step
-    RateCard rates            = getRateCard(rideType);
-    double subtotal           = calculateSubtotal(rates, distanceKm, timeMinutes);
-    double peakSurcharge      = calculatePeakSurcharge(subtotal, isPeakHour);
-    double fareAfterSurcharge = subtotal + peakSurcharge;
+    // 2. Calculate the fare
+    RateCard rates        = getRateCard(rideType);
+    double discountRate   = getPromoDiscountRate(promoCode);   // 0 if none or invalid
+    FareBreakdown fare    = buildFareBreakdown(rates, distanceKm, timeMinutes,
+                                               isPeakHour, discountRate);
 
-    // Promo: work out the discount rate, then the discount amount.
-    // A rate above 0 means the code was recognised.
-    double discountRate   = getPromoDiscountRate(promoCode);
-    bool promoIsValid     = (discountRate > 0);
-    double promoDiscount  = calculatePromoDiscount(fareAfterSurcharge, discountRate);
-    double total          = fareAfterSurcharge - promoDiscount;
-
-    // Temporary check so we can see the values are correct.
-    // This block gets replaced by the real fare breakdown in Step 7.
-    cout << fixed << setprecision(2);   // always show money with 2 decimal places
-    cout << "\n--- Temporary check ---" << endl;
-    cout << "Ride type: " << getRideName(rideType) << endl;
-    cout << "Distance (km): " << distanceKm << endl;
-    cout << "Time (mins): " << timeMinutes << endl;
-    cout << "Peak hour: " << (isPeakHour ? "Yes" : "No") << endl;
-    cout << "Subtotal: RM " << subtotal << endl;
-    cout << "Peak surcharge: RM " << peakSurcharge << endl;
-    cout << "Fare after surcharge: RM " << fareAfterSurcharge << endl;
-
-    if (promoIsValid) {
-        cout << "Promo " << toUpperCase(promoCode) << " applied. Discount: RM "
-             << promoDiscount << endl;
-    } else if (promoCode != NO_PROMO) {
-        // Something was typed, but it is not a known code: tell the user, continue at full price
-        cout << "Promo code \"" << promoCode << "\" is not valid. No discount applied." << endl;
-    }
-    cout << "TOTAL: RM " << total << endl;
+    // 3. Show the result
+    displayReceipt(rideType, distanceKm, timeMinutes, promoCode, discountRate, fare);
 
     return 0;
 }
@@ -146,13 +146,6 @@ string getRideName(RideType rideType) {
     }
 }
 
-// Subtotal = base fare + (distance x rate per km) + (time x rate per minute).
-double calculateSubtotal(const RateCard& rates, double distanceKm, double timeMinutes) {
-    return rates.baseFare
-         + (distanceKm * rates.ratePerKm)
-         + (timeMinutes * rates.ratePerMinute);
-}
-
 // Peak hour surcharge = a percentage of the subtotal, or 0 if it is not peak hour.
 // Returns the surcharge AMOUNT (not the new total) so the receipt can show it as its own line.
 double calculatePeakSurcharge(double subtotal, bool isPeakHour) {
@@ -183,6 +176,101 @@ double getPromoDiscountRate(const string& promoCode) {
 // Returns the discount AMOUNT so the receipt can show it as its own line.
 double calculatePromoDiscount(double fareAfterSurcharge, double discountRate) {
     return fareAfterSurcharge * discountRate;
+}
+
+// Rounds a money amount to whole cents (2 decimal places).
+// Rounding each amount when it is calculated means the printed lines always add up.
+double roundToCents(double amount) {
+    return round(amount * 100.0) / 100.0;
+}
+
+// Works out every amount on the receipt, in order:
+// base fare + distance + time = subtotal, then + peak surcharge, then - promo discount = total.
+FareBreakdown buildFareBreakdown(const RateCard& rates, double distanceKm, double timeMinutes,
+                                 bool isPeakHour, double discountRate) {
+    FareBreakdown fare;
+
+    fare.baseFare       = rates.baseFare;
+    fare.distanceCharge = roundToCents(distanceKm * rates.ratePerKm);
+    fare.timeCharge     = roundToCents(timeMinutes * rates.ratePerMinute);
+    fare.subtotal       = fare.baseFare + fare.distanceCharge + fare.timeCharge;
+
+    fare.peakSurcharge  = roundToCents(calculatePeakSurcharge(fare.subtotal, isPeakHour));
+
+    // The discount applies to the fare INCLUDING the peak surcharge
+    double fareAfterSurcharge = fare.subtotal + fare.peakSurcharge;
+    fare.promoDiscount  = roundToCents(calculatePromoDiscount(fareAfterSurcharge, discountRate));
+
+    fare.total          = fareAfterSurcharge - fare.promoDiscount;
+
+    return fare;
+}
+
+// ---- Display functions ----
+
+// Converts a rate like 0.20 into a whole percentage like 20 (rounded, not truncated).
+int toPercent(double rate) {
+    return static_cast<int>(rate * 100 + 0.5);
+}
+
+// Prints one full-width line made of a single symbol, e.g. ==== or ----.
+void printSeparator(char symbol) {
+    cout << string(RECEIPT_WIDTH, symbol) << endl;
+}
+
+// Prints one receipt line: the label on the left, the amount on the right.
+// setw only affects the next item printed, so it is repeated for each column.
+void printMoneyLine(const string& label, double amount) {
+    cout << left << setw(LABEL_WIDTH) << label
+         << "RM " << right << setw(RECEIPT_WIDTH - LABEL_WIDTH - 3) << amount << endl;
+}
+
+// Prints the full fare receipt. This function only displays; it never reads or calculates.
+void displayReceipt(RideType rideType, double distanceKm, double timeMinutes,
+                    const string& promoCode, double discountRate, const FareBreakdown& fare) {
+    cout << fixed << setprecision(2);   // always show money with 2 decimal places
+
+    cout << endl;
+    printSeparator('=');
+    cout << "               FARE RECEIPT" << endl;
+    printSeparator('=');
+
+    // Trip details
+    cout << left;
+    cout << "Ride type : " << getRideName(rideType) << endl;
+    cout << "Distance  : " << distanceKm << " km" << endl;
+    cout << "Time      : " << timeMinutes << " min" << endl;
+    printSeparator('-');
+
+    // Fare breakdown
+    printMoneyLine("Base fare", fare.baseFare);
+    printMoneyLine("Distance charge", fare.distanceCharge);
+    printMoneyLine("Time charge", fare.timeCharge);
+    printSeparator('-');
+    printMoneyLine("Subtotal", fare.subtotal);
+
+    // Only show the surcharge line if a surcharge was actually charged
+    if (fare.peakSurcharge > 0) {
+        printMoneyLine("Peak surcharge (" + to_string(toPercent(PEAK_SURCHARGE_RATE)) + "%)",
+                       fare.peakSurcharge);
+    }
+
+    // Promo: valid code -> discount line; typed but invalid -> notice; none -> nothing
+    if (discountRate > 0) {
+        printMoneyLine("Promo " + toUpperCase(promoCode) + " (-"
+                       + to_string(toPercent(discountRate)) + "%)",
+                       -fare.promoDiscount);
+    } else if (promoCode != NO_PROMO) {
+        cout << "Promo \"" << promoCode << "\" is not valid. No discount." << endl;
+    }
+
+    printSeparator('-');
+    printMoneyLine("TOTAL", fare.total);
+    printSeparator('=');
+
+    // Disclaimer (also shown in the opening banner)
+    cout << "Sample rates only. Not real Grab prices." << endl;
+    cout << "Thank you for using the Fare Calculator!" << endl;
 }
 
 // ---- Input helper functions ----
@@ -248,9 +336,21 @@ double readPositiveNumber(const string& prompt, const string& itemName) {
     }
 }
 
-// ---- Input and display functions ----
+// ---- Input functions and banner ----
+
+// Opening screen: program title, the link to Part 1, and the sample-rates disclaimer.
 void showBanner() {
-    cout << "=== Fare Calculator ===" << endl;
+    printSeparator('=');
+    cout << "   FARE CALCULATOR (Grab case study)" << endl;
+    printSeparator('=');
+    cout << "Part 1 link: Grab, using Winston's model" << endl;
+    cout << " Stage 4: riders needed clear, fair fares" << endl;
+    cout << " Stage 5: taxi, car and bike in one app" << endl;
+    printSeparator('-');
+    cout << "NOTE: All rates, surcharges and promo" << endl;
+    cout << "codes are MADE-UP samples for this" << endl;
+    cout << "assignment. They are NOT real Grab prices." << endl;
+    printSeparator('=');
 }
 
 // Shows a numbered menu and keeps asking until the user picks 1, 2 or 3.
