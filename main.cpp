@@ -3,6 +3,7 @@
 #include <string>
 #include <limits>    // numeric_limits, used when discarding a bad line
 #include <cstdlib>   // exit()
+#include <cctype>    // toupper, used to make promo codes case-insensitive
 using namespace std;
 
 // Ride types the user can choose from.
@@ -20,6 +21,16 @@ struct RateCard {
 // NOTE: 20% is a MADE-UP SAMPLE VALUE for this assignment, not a real Grab price.
 const double PEAK_SURCHARGE_RATE = 0.20;
 
+// Promo codes and their discounts (percentage of the fare after surcharge).
+// NOTE: these codes and percentages are MADE UP for this assignment, not real Grab promotions.
+const string PROMO_CODE_SAVE10     = "SAVE10";
+const string PROMO_CODE_STUDENT15  = "STUDENT15";
+const string PROMO_CODE_WELCOME20  = "WELCOME20";
+const double PROMO_RATE_SAVE10     = 0.10;
+const double PROMO_RATE_STUDENT15  = 0.15;
+const double PROMO_RATE_WELCOME20  = 0.20;
+const string NO_PROMO              = "NONE";   // value used when the user enters no promo code
+
 // ---- Function declarations (prototypes) ----
 void showBanner();                 // program title + sample-rates disclaimer
 RideType getRideType();            // ask the user for ride type (validated)
@@ -33,12 +44,15 @@ RateCard getRateCard(RideType rideType);    // switch: pick base fare and rates 
 string getRideName(RideType rideType);      // switch: ride type -> readable name
 double calculateSubtotal(const RateCard& rates, double distanceKm, double timeMinutes);
 double calculatePeakSurcharge(double subtotal, bool isPeakHour);   // surcharge amount (0 if not peak)
+double getPromoDiscountRate(const string& promoCode);              // discount rate for a code (0 if not valid)
+double calculatePromoDiscount(double fareAfterSurcharge, double discountRate);   // discount amount
 
 // Input helper functions (used by the input functions above)
 void discardRestOfLine();          // throw away leftover text on the input line
 void exitIfInputEnded();           // stop cleanly if input has ended (Ctrl+D / Ctrl+Z)
 double readPositiveNumber(const string& prompt, const string& itemName);
 string trimSpaces(const string& text);      // remove spaces/tabs from both ends of a string
+string toUpperCase(const string& text);     // convert a string to UPPERCASE
 
 int main() {
     showBanner();
@@ -51,10 +65,17 @@ int main() {
     string promoCode    = getPromoCode();
 
     // Calculate the fare step by step
-    RateCard rates          = getRateCard(rideType);
-    double subtotal         = calculateSubtotal(rates, distanceKm, timeMinutes);
-    double peakSurcharge    = calculatePeakSurcharge(subtotal, isPeakHour);
+    RateCard rates            = getRateCard(rideType);
+    double subtotal           = calculateSubtotal(rates, distanceKm, timeMinutes);
+    double peakSurcharge      = calculatePeakSurcharge(subtotal, isPeakHour);
     double fareAfterSurcharge = subtotal + peakSurcharge;
+
+    // Promo: work out the discount rate, then the discount amount.
+    // A rate above 0 means the code was recognised.
+    double discountRate   = getPromoDiscountRate(promoCode);
+    bool promoIsValid     = (discountRate > 0);
+    double promoDiscount  = calculatePromoDiscount(fareAfterSurcharge, discountRate);
+    double total          = fareAfterSurcharge - promoDiscount;
 
     // Temporary check so we can see the values are correct.
     // This block gets replaced by the real fare breakdown in Step 7.
@@ -64,10 +85,18 @@ int main() {
     cout << "Distance (km): " << distanceKm << endl;
     cout << "Time (mins): " << timeMinutes << endl;
     cout << "Peak hour: " << (isPeakHour ? "Yes" : "No") << endl;
-    cout << "Promo code: " << promoCode << endl;
     cout << "Subtotal: RM " << subtotal << endl;
     cout << "Peak surcharge: RM " << peakSurcharge << endl;
     cout << "Fare after surcharge: RM " << fareAfterSurcharge << endl;
+
+    if (promoIsValid) {
+        cout << "Promo " << toUpperCase(promoCode) << " applied. Discount: RM "
+             << promoDiscount << endl;
+    } else if (promoCode != NO_PROMO) {
+        // Something was typed, but it is not a known code: tell the user, continue at full price
+        cout << "Promo code \"" << promoCode << "\" is not valid. No discount applied." << endl;
+    }
+    cout << "TOTAL: RM " << total << endl;
 
     return 0;
 }
@@ -133,6 +162,29 @@ double calculatePeakSurcharge(double subtotal, bool isPeakHour) {
     return 0.0;
 }
 
+// Returns the discount rate for a promo code, or 0 if the code is not recognised.
+// Codes are case-insensitive (save10 works the same as SAVE10).
+// An if/else chain is used here because switch cannot work on strings.
+double getPromoDiscountRate(const string& promoCode) {
+    string code = toUpperCase(promoCode);
+
+    if (code == PROMO_CODE_SAVE10) {
+        return PROMO_RATE_SAVE10;
+    } else if (code == PROMO_CODE_STUDENT15) {
+        return PROMO_RATE_STUDENT15;
+    } else if (code == PROMO_CODE_WELCOME20) {
+        return PROMO_RATE_WELCOME20;
+    }
+
+    return 0.0;     // "NONE" or any unrecognised code: no discount
+}
+
+// Discount = a percentage of the fare after the peak surcharge.
+// Returns the discount AMOUNT so the receipt can show it as its own line.
+double calculatePromoDiscount(double fareAfterSurcharge, double discountRate) {
+    return fareAfterSurcharge * discountRate;
+}
+
 // ---- Input helper functions ----
 
 // Throws away everything left on the current input line,
@@ -159,6 +211,16 @@ string trimSpaces(const string& text) {
     }
     size_t last = text.find_last_not_of(" \t");
     return text.substr(first, last - first + 1);
+}
+
+// Converts every letter in the text to uppercase, e.g. "save10" becomes "SAVE10".
+string toUpperCase(const string& text) {
+    string result = text;
+    for (size_t i = 0; i < result.length(); i++) {
+        // cast to unsigned char first: toupper is only safe for non-negative values
+        result[i] = static_cast<char>(toupper(static_cast<unsigned char>(result[i])));
+    }
+    return result;
 }
 
 // Keeps asking until the user enters a number greater than 0.
@@ -247,7 +309,7 @@ bool getPeakHour() {
 
 // Asks for a promo code. Pressing Enter (or typing only spaces) means "no promo code".
 // Returns "NONE" in that case, so later steps have one clear value to check.
-// (Whether a code is actually valid is checked later, in the promo step.)
+// (Whether a code is actually valid is checked by getPromoDiscountRate.)
 string getPromoCode() {
     string code;
     cout << "Enter promo code (press Enter if none): ";
@@ -257,7 +319,7 @@ string getPromoCode() {
 
     code = trimSpaces(code);
     if (code.empty()) {
-        return "NONE";
+        return NO_PROMO;
     }
     return code;
 }
